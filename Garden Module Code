@@ -3,28 +3,28 @@
 //the esp32 board library version is 2.0.11 and firebase for esp8266 and esp32 by mobizt version is 4.4.17
 
 //including necessary libraries
-\#include \<Arduino.h>
-\#include \<SPI.h>
-\#include \<Wire.h>
-\#include \<OneWire.h>
-\#include \<DallasTemperature.h>
-\#include \<WiFiManager.h>
-\#if defined(ESP32)
-\#include \<WiFi.h>
-\#elif defined(ESP8266)
-\#include \<ESP8266WiFi.h>
-\#endif
-\#include \<Firebase\_ESP\_Client.h>
-\#include "addons/TokenHelper.h"
-\#include "addons/RTDBHelper.h"
+#include <Arduino.h>
+#include <SPI.h>
+#include <Wire.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+#include <WiFiManager.h>
+#if defined(ESP32)
+#include <WiFi.h>
+#elif defined(ESP8266)
+#include <ESP8266WiFi.h>
+#endif
+#include <Firebase_ESP_Client.h>
+#include "addons/TokenHelper.h"
+#include "addons/RTDBHelper.h"
 
-\#define API\_KEY "**********"      //get from firebase
-\#define USER\_EMAIL "*******"      //create a dummy email on firebase
-\#define USER\_PASSWORD "*****"     //create a dummy password on firebase
-\#define DATABASE\_URL "**\*\*\*\*\*\*"   //get databse url from firebase
+#define API_KEY "**********"      //get from firebase
+#define USER_EMAIL "*******"      //create a dummy email on firebase
+#define USER_PASSWORD "*****"     //create a dummy password on firebase
+#define DATABASE_URL "**\*\*\*\*\*\*"   //get databse url from firebase
 
-\#define RESET\_WIFI\_PIN 0  // GPIO for resetting WiFi credentials
-\#define wifi\_led 12
+#define RESET_WIFI_PIN 0  // GPIO for resetting WiFi credentials
+#define wifi_led 12
 
 FirebaseData fbdo;
 FirebaseAuth auth;
@@ -57,7 +57,7 @@ unsigned long relay2StartTime = 0;
 const unsigned long relayRunTime = 10000; // 10 seconds
 
 OneWire oneWire(temp);
-DallasTemperature sensor(\&oneWire);
+DallasTemperature sensor(&oneWire);
 
 unsigned long sendDataPrevMillis = 0;
 unsigned long timerDelay = 1000;
@@ -66,101 +66,101 @@ WiFiManager wifiManager;
 
 void resetWiFi()
 {
-wifiManager.resetSettings();
-ESP.restart();
+  wifiManager.resetSettings();
+  ESP.restart();
 }
 
 void initWiFiManager()
 {
-pinMode(RESET\_WIFI\_PIN, INPUT\_PULLUP);
-unsigned long pressStart = millis();
-while (digitalRead(RESET\_WIFI\_PIN) == LOW)
-{
-if (millis() - pressStart > 5000)
-{
-resetWiFi();
-}
-}
-wifiManager.autoConnect("GardenModuleAP");
+  pinMode(RESET_WIFI_PIN, INPUT_PULLUP);
+  unsigned long pressStart = millis();
+  while (digitalRead(RESET_WIFI_PIN) == LOW)
+  {
+    if (millis() - pressStart > 5000)
+    {
+      resetWiFi();
+    }
+  }
+  wifiManager.autoConnect("GardenModuleAP");
 }
 
 void sendInt(String path, int value)
 {
-Firebase.RTDB.setInt(\&fbdo, path.c\_str(), value);
+Firebase.RTDB.setInt(&fbdo, path.c_str(), value);
 }
 
 void sendFloat(String path, float value)
 {
-Firebase.RTDB.setFloat(\&fbdo, path.c\_str(), value);
+  Firebase.RTDB.setFloat(&fbdo, path.c_str(), value);
 }
 
 void fetchSettings()
 {
-if (Firebase.RTDB.getInt(\&fbdo, soilMoistSettingPath1.c\_str()))
-{
-MoistureThreshold1 = fbdo.intData();
-}
-if (Firebase.RTDB.getInt(\&fbdo, soilMoistSettingPath2.c\_str()))
-{
-MoistureThreshold2 = fbdo.intData();
-}
-if (Firebase.RTDB.getInt(\&fbdo, relayControlPath25.c\_str()))
-{
-manualControlRelay1 = fbdo.intData();
-}
-if (Firebase.RTDB.getInt(\&fbdo, relayControlPath26.c\_str()))
-{
-manualControlRelay2 = fbdo.intData();
-}
+  if (Firebase.RTDB.getInt(&fbdo, soilMoistSettingPath1.c_str()))
+  {
+    MoistureThreshold1 = fbdo.intData();
+  }
+  if (Firebase.RTDB.getInt(&fbdo, soilMoistSettingPath2.c_str()))
+  {
+    MoistureThreshold2 = fbdo.intData();
+  }
+  if (Firebase.RTDB.getInt(&fbdo, relayControlPath25.c_str()))
+  {
+    manualControlRelay1 = fbdo.intData();
+  }
+  if (Firebase.RTDB.getInt(&fbdo, relayControlPath26.c_str()))
+  {
+    manualControlRelay2 = fbdo.intData();
+  }
 }
 
 void updateOnlineStatus()
 {
-Firebase.RTDB.setInt(\&fbdo, onlineStatusPath.c\_str(), 1);
+  Firebase.RTDB.setInt(&fbdo, onlineStatusPath.c_str(), 1);
 }
 
 void setup()
 {
-Serial.begin(115200);
-initWiFiManager();
+  Serial.begin(115200);
+  initWiFiManager();
 
-pinMode(soil1, INPUT);
-pinMode(soil2, INPUT);
-pinMode(wifi\_led, OUTPUT);
-digitalWrite(wifi\_led, LOW);
-pinMode(rain, INPUT\_PULLUP);
-sensor.begin();
+  pinMode(soil1, INPUT);
+  pinMode(soil2, INPUT);
+  pinMode(wifi_led, OUTPUT);
+  digitalWrite(wifi_led, LOW);
+  pinMode(rain, INPUT_PULLUP);
+  sensor.begin();
 
-pinMode(relay1, OUTPUT);
-digitalWrite(relay1, HIGH);
-pinMode(relay2, OUTPUT);
-digitalWrite(relay2, HIGH);
+  pinMode(relay1, OUTPUT);
+  digitalWrite(relay1, HIGH);
+  pinMode(relay2, OUTPUT);
+  digitalWrite(relay2, HIGH);
 
-config.api\_key = API\_KEY;
-auth.user.email = USER\_EMAIL;
-auth.user.password = USER\_PASSWORD;
-config.database\_url = DATABASE\_URL;
+  config.api_key = API_KEY;
+  auth.user.email = USER_EMAIL;
+  auth.user.password = USER_PASSWORD;
+  config.database_url = DATABASE_URL;
 
-Firebase.reconnectWiFi(true);
-Firebase.begin(\&config, \&auth);
+  Firebase.reconnectWiFi(true);
+  Firebase.begin(&config, &auth);
 
-while ((auth.token.uid) == "")
-{
-delay(1000);
-}
-uid = auth.token.uid.c\_str();
-databasePath = "/devices/garden";
-relayStatusPath25 = databasePath + "/relay\_status\_25";
-relayStatusPath26 = databasePath + "/relay\_status\_26";
-relayControlPath25 = databasePath + "/outputs/digital/25";
-relayControlPath26 = databasePath + "/outputs/digital/26";
-soil1Path = databasePath + "/soil\_1";
-soil2Path = databasePath + "/soil\_2";
-tempPath = databasePath + "/temp";
-rainPath = databasePath + "/rain";
-onlineStatusPath = databasePath + "/online\_status";
-soilMoistSettingPath1 = databasePath + "/settings/soil\_setting\_1";
-soilMoistSettingPath2 = databasePath + "/settings/soil\_setting\_2";
+  while ((auth.token.uid) == "")
+  {
+    delay(1000);
+  }
+  uid = auth.token.uid.c_str();
+  databasePath = "/devices/garden";
+  relayStatusPath25 = databasePath + "/relay_status/25";
+  relayStatusPath26 = databasePath + "/relay_status/26";
+  relayControlPath25 = databasePath + "/outputs/digital/25";
+  relayControlPath26 = databasePath + "/outputs/digital/26";
+  soil1Path = databasePath + "/soil_1";
+  soil2Path = databasePath + "/soil_2";
+  tempPath = databasePath + "/temp";
+  rainPath = databasePath + "/rain";
+  onlineStatusPath = databasePath + "/online_status";
+  soilMoistSettingPath1 = databasePath + "/settings/soil_setting_1";
+  soilMoistSettingPath2 = databasePath + "/settings/soil_setting_2";
 
 updateOnlineStatus();
 fetchSettings();
@@ -168,50 +168,49 @@ fetchSettings();
 
 void loop()
 {
-wifi\_led\_status();
-if (Firebase.ready() && (millis() - sendDataPrevMillis > timerDelay))
-{
-sendDataPrevMillis = millis();
-updateOnlineStatus();
-fetchSettings();
-
-```
-int rainstatus = !digitalRead(rain);
-int soilcent1 = constrain(map(analogRead(soil1), AirValue, WaterValue, 0, 100), 0, 100);
-if(soilcent1 > 100)
-{
-  soilcent1 = 100;
-}
-int soilcent2 = constrain(map(analogRead(soil2), AirValue, WaterValue, 0, 100), 0, 100);
-if(soilcent2 > 100)
-{
-  soilcent2 = 100;
-}
-
-if (manualControlRelay1)
-{
-  digitalWrite(relay1, LOW);
-}
-else
-{
-  if (rainstatus)
+  wifi_led_status();
+  if (Firebase.ready() && (millis() - sendDataPrevMillis > timerDelay))
   {
-    digitalWrite(relay1, HIGH);
-  }
-  else
-  {
-    if (soilcent1 < MoistureThreshold1 && relay1StartTime == 0)
+    sendDataPrevMillis = millis();
+    updateOnlineStatus();
+    fetchSettings();
+
+    int rainstatus = !digitalRead(rain);
+    int soilcent1 = constrain(map(analogRead(soil1), AirValue, WaterValue, 0, 100), 0, 100);
+    if(soilcent1 > 100)
+    {
+      soilcent1 = 100;
+    }
+    int soilcent2 = constrain(map(analogRead(soil2), AirValue, WaterValue, 0, 100), 0, 100);
+    if(soilcent2 > 100)
+    {
+      soilcent2 = 100;
+    }
+
+    if (manualControlRelay1)
     {
       digitalWrite(relay1, LOW);
-      relay1StartTime = millis();
     }
-    else if (relay1StartTime > 0 && millis() - relay1StartTime >= relayRunTime)
+    else
     {
-      digitalWrite(relay1, HIGH);
-      relay1StartTime = 0;
+      if (rainstatus)
+    {
+        digitalWrite(relay1, HIGH);
+    }
+    else
+    {
+      if (soilcent1 < MoistureThreshold1 && relay1StartTime == 0)
+      {
+        digitalWrite(relay1, LOW);
+        relay1StartTime = millis();
+      }
+      else if (relay1StartTime > 0 && millis() - relay1StartTime >= relayRunTime)
+      {
+        digitalWrite(relay1, HIGH);
+        relay1StartTime = 0;
+      }
     }
   }
-}
 
 if (manualControlRelay2)
 {
@@ -248,23 +247,22 @@ sendInt(rainPath, rainstatus);
 sendFloat(tempPath, temperature);
 sendInt(relayStatusPath25, digitalRead(relay1) == LOW ? 1 : 0);
 sendInt(relayStatusPath26, digitalRead(relay2) == LOW ? 1 : 0);
-```
 
 }
 if (Firebase.isTokenExpired())
 {
-Firebase.refreshToken(\&config);
+Firebase.refreshToken(&config);
 }
 }
 
-void wifi\_led\_status()
+void wifi_led_status()
 {
-if(WiFi.status() == WL\_CONNECTED)
+if(WiFi.status() == WL_CONNECTED)
 {
-digitalWrite(wifi\_led, HIGH);
+digitalWrite(wifi_led, HIGH);
 }
 else
 {
-digitalWrite(wifi\_led, LOW);
+digitalWrite(wifi_led, LOW);
 }
 }
