@@ -1,0 +1,315 @@
+//Tank module
+//same libraries as garden module
+
+#include <Arduino.h>
+#include <SPI.h>
+#include <WiFiManager.h>
+#if defined(ESP32)
+  #include <WiFi.h>
+#elif defined(ESP8266)
+  #include <ESP8266WiFi.h>
+#endif
+#include <Firebase_ESP_Client.h>
+#include "addons/TokenHelper.h"
+#include "addons/RTDBHelper.h"
+
+#define API_KEY "*****"
+#define USER_EMAIL "*****"
+#define USER_PASSWORD "*****"
+#define DATABASE_URL "*****"
+
+#define RESET_WIFI_PIN 15  // GPIO for resetting WiFi credentials
+#define wifi_led 4  
+
+FirebaseData fbdo;
+FirebaseAuth auth;
+FirebaseConfig config;
+
+String uid;
+String databasePath;
+String relayStatusPath25;
+String relayControlPath25;
+String level25Path, level50Path, level75Path, level100Path, currentPath;
+String onlineStatusPath;
+String pumptriggerPath;
+
+const int relay1 = 25;
+const int level_25 = 32;
+const int level_50 = 33;
+const int level_75 = 26;
+const int level_100 = 27;
+const int current = 36;
+
+int pump_trigger = 75;
+
+bool manualControlRelay1 = false;
+
+float R1 = 6800.0;
+float R2 = 11830.0;
+
+unsigned long sendDataPrevMillis = 0;
+unsigned long timerDelay = 1000;
+unsigned long pressStart = 0;
+unsigned long wifiConnectTimeout = 30000;  // Timeout for WiFi connection (30 seconds)
+
+WiFiManager wifiManager;
+
+void resetWiFi()
+{
+  wifiManager.resetSettings();
+  Serial.println("WiFi settings reset! Restarting ESP...");
+  delay(1000);
+  ESP.restart();
+}
+
+void handleResetButton()
+{
+  static unsigned long pressStart = 0;
+  static bool buttonActive = false;
+
+  if (digitalRead(RESET_WIFI_PIN) == LOW)
+  {
+    if (!buttonActive) {
+      pressStart = millis();
+      buttonActive = true;
+      Serial.println("Reset button pressed");
+    }
+    
+    if (millis() - pressStart >= 5000)
+    {
+      Serial.println("Resetting WiFi credentials...");
+      resetWiFi();
+    }
+  }
+  else
+  {
+    if (buttonActive)
+    {
+      buttonActive = false;
+      Serial.println("Reset button released");
+    }
+  }
+}
+
+void initWiFiManager()
+{
+  WiFiManager wm;
+  wm.setDebugOutput(false);
+  wm.setConfigPortalTimeout(120);
+
+  // Check if reset button is pressed during startup
+  if (digitalRead(RESET_WIFI_PIN) == LOW)
+  {
+    Serial.println("Reset button pressed during startup");
+    wm.startConfigPortal("TankModuleAP");
+  }
+  else
+  {
+    if (!wm.autoConnect("TankModuleAP"))
+    {
+      Serial.println("Failed to connect");
+      wm.startConfigPortal("TankModuleAP");
+    }
+  }
+
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    Serial.println("Connected to WiFi");
+  }
+}
+
+void sendInt(String path, int value)
+{
+  Firebase.RTDB.setInt(&fbdo, path.c_str(), value);
+}
+
+void sendFloat(String path, float value)
+{
+  Firebase.RTDB.setFloat(&fbdo, path.c_str(), value);
+}
+
+void fetchSettings()
+{
+  if (Firebase.RTDB.getInt(&fbdo, pumptriggerPath.c_str()))
+  {
+    pump_trigger = fbdo.intData();
+  }
+  if (Firebase.RTDB.getInt(&fbdo, relayControlPath25.c_str()))
+  {
+    manualControlRelay1 = fbdo.intData();
+  }
+}
+
+void updateOnlineStatus()
+{
+  Firebase.RTDB.setInt(&fbdo, onlineStatusPath.c_str(), 1);
+}
+
+void setup()
+{
+  Serial.begin(115200);
+  initWiFiManager();
+
+  pinMode(level_25, INPUT_PULLUP);
+  pinMode(level_50, INPUT_PULLUP);
+  pinMode(level_75, INPUT_PULLUP);
+  pinMode(level_100, INPUT_PULLUP);
+  pinMode(current, INPUT);
+  pinMode(RESET_WIFI_PIN, INPUT_PULLUP);
+  pinMode(wifi_led, OUTPUT);
+  digitalWrite(wifi_led, LOW);
+  
+  pinMode(relay1, OUTPUT);
+  digitalWrite(relay1, HIGH);
+
+  config.api_key = API_KEY;
+  auth.user.email = USER_EMAIL;
+  auth.user.password = USER_PASSWORD;
+  config.database_url = DATABASE_URL;
+
+  Firebase.reconnectWiFi(true);
+  Firebase.begin(&config, &auth);
+
+  while ((auth.token.uid) == "")
+  {
+    delay(1000);
+  }
+
+  uid = auth.token.uid.c_str();
+  databasePath = "/devices/tank";
+  relayStatusPath25 = databasePath + "/relay_status_25";
+  relayControlPath25 = databasePath + "/output/digital/25";
+  level25Path = databasePath + "/level_25";
+  level50Path = databasePath + "/level_50";
+  level75Path = databasePath + "/level_75";
+  level100Path = databasePath + "/level_100";
+  currentPath = databasePath + "/current";
+  onlineStatusPath = databasePath + "/online_status";
+  pumptriggerPath = databasePath + "/settings/pump_trig";
+  
+  updateOnlineStatus();
+  fetchSettings();
+}
+
+void loop()
+{
+  handleResetButton();
+  wifi_led_status();
+  if (Firebase.ready() && (millis() - sendDataPrevMillis > timerDelay))
+  {
+    sendDataPrevMillis = millis();
+    updateOnlineStatus();
+    fetchSettings();
+
+    float curr20 = 0.0;
+
+    int lev25 = !digitalRead(level_25);
+    int lev50 = !digitalRead(level_50);
+    int lev75 = !digitalRead(level_75);
+    int lev100 = !digitalRead(level_100);
+
+    //relay control
+    if (manualControlRelay1)
+    {
+      digitalWrite(relay1, LOW);
+      int adc = analogRead(current);
+      float adc_voltage = adc * (3.3 / 4096.0);
+      float current_voltage = (adc_voltage * (R1+R2)/R2);
+      curr20 = (current_voltage - 2.5) / 0.100;
+      curr20 = round(curr20 * 100.0) / 100.0;
+      curr20 = abs(curr20);
+    }
+    else if (pump_trigger == 100)
+    {
+      if(lev100 == LOW)
+      {
+        digitalWrite(relay1, LOW);
+        int adc = analogRead(current);
+        float adc_voltage = adc * (3.3 / 4096.0);
+        float current_voltage = (adc_voltage * (R1+R2)/R2);
+        curr20 = (current_voltage - 2.5) / 0.100;
+        curr20 = round(curr20 * 100.0) / 100.0;
+        curr20 = abs(curr20);
+      }
+      else
+      {
+        digitalWrite(relay1, HIGH);
+      }
+    }
+    else if (pump_trigger == 75)
+    {
+      if(lev75 == LOW && lev100 == LOW)
+      {
+        digitalWrite(relay1, LOW);
+        int adc = analogRead(current);
+        float adc_voltage = adc * (3.3 / 4096.0);
+        float current_voltage = (adc_voltage * (R1+R2)/R2);
+        curr20 = (current_voltage - 2.5) / 0.100;
+        curr20 = round(curr20 * 100.0) / 100.0;
+        curr20 = abs(curr20);
+      }
+      else if(lev75 == HIGH && lev100 == HIGH)
+      {
+        digitalWrite(relay1, HIGH);
+      }
+    }
+    else if (pump_trigger == 50)
+    {
+      if(lev50 == LOW && lev75 == LOW && lev100 == LOW)
+      {
+        digitalWrite(relay1, LOW);
+        int adc = analogRead(current);
+        float adc_voltage = adc * (3.3 / 4096.0);
+        float current_voltage = (adc_voltage * (R1+R2)/R2);
+        curr20 = (current_voltage - 2.5) / 0.100;
+        curr20 = round(curr20 * 100.0) / 100.0;
+        curr20 = abs(curr20);
+      }
+      else if(lev50 == HIGH && lev75 == HIGH && lev100 == HIGH)
+      {
+        digitalWrite(relay1, HIGH);
+      }
+    }
+    else if (pump_trigger == 25)
+    {
+      if(lev25 == LOW && lev50 == LOW && lev75 == LOW && lev100 == LOW)
+      {
+        digitalWrite(relay1, LOW);
+        int adc = analogRead(current);
+        float adc_voltage = adc * (3.3 / 4096.0);
+        float current_voltage = (adc_voltage * (R1+R2)/R2);
+        curr20 = (current_voltage - 2.5) / 0.100;
+        curr20 = round(curr20 * 100.0) / 100.0;
+        curr20 = abs(curr20);
+      }
+      else if(lev25 == HIGH && lev50 == HIGH && lev75 == HIGH && lev100 == HIGH)
+      {
+        digitalWrite(relay1, HIGH);
+      }
+    }    
+
+    sendInt(level25Path, lev25);
+    sendInt(level50Path, lev50);
+    sendInt(level75Path, lev75);
+    sendInt(level100Path, lev100);
+    sendFloat(currentPath, curr20);
+    sendInt(relayStatusPath25, digitalRead(relay1) == LOW ? 1 : 0);
+  }
+
+  if (Firebase.isTokenExpired())
+  {
+    Firebase.refreshToken(&config);
+  }
+}
+
+void wifi_led_status()
+{
+  if(WiFi.status() == WL_CONNECTED)
+  {
+    digitalWrite(wifi_led, HIGH);
+  }
+  else
+  {
+    digitalWrite(wifi_led, LOW);
+  }
+}
