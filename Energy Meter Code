@@ -1,0 +1,262 @@
+//EnergyMeter
+//same library as garden module
+
+#include <Arduino.h>
+#include <SPI.h>
+#include <Wire.h>
+#include <ZMPT101B.h>
+#include <WiFiManager.h>
+#if defined(ESP32)
+  #include <WiFi.h>
+#elif defined(ESP8266)
+  #include <ESP8266WiFi.h>
+#endif
+#include <Firebase_ESP_Client.h>
+#include "addons/TokenHelper.h"
+#include "addons/RTDBHelper.h"
+
+#define API_KEY "*****"
+#define USER_EMAIL "*****"
+#define USER_PASSWORD "*****"
+#define DATABASE_URL "*****"
+
+#define RESET_WIFI_PIN 15
+#define wifi_led 4
+
+#define SENSITIVITY 500.0f
+#define CALIBRATION_FACTOR 1.49
+#define NUM_SAMPLES 50
+
+FirebaseData fbdo;
+FirebaseAuth auth;
+FirebaseConfig config;
+
+String uid;
+String databasePath;
+String relayStatusPath25, relayStatusPath26, relayStatusPath27, relayStatusPath14;
+String relayControlPath25, relayControlPath26, relayControlPath27, relayControlPath14;
+String voltagePath, currentPath;
+String onlineStatusPath;
+
+const int relay1 = 25;
+const int relay2 = 26;
+const int relay3 = 27;
+const int relay4 = 14;
+const int voltage = 34;
+const int current = 35;
+
+float R1 = 6800.0;
+float R2 = 11830.0;
+
+bool manualControlRelay1 = false;
+bool manualControlRelay2 = false;
+bool manualControlRelay3 = false;
+bool manualControlRelay4 = false;
+
+unsigned long sendDataPrevMillis = 0;
+unsigned long timerDelay = 1000;
+
+ZMPT101B voltageSensor(voltage, 50.0);
+WiFiManager wifiManager;
+
+void resetWiFi()
+{
+  wifiManager.resetSettings();
+  Serial.println("WiFi settings reset! Restarting ESP...");
+  delay(1000);
+  ESP.restart();
+}
+
+void handleResetButton()
+{
+  static unsigned long pressStart = 0;
+  static bool buttonActive = false;
+
+  if (digitalRead(RESET_WIFI_PIN) == LOW)
+  {
+    if (!buttonActive) {
+      pressStart = millis();
+      buttonActive = true;
+      Serial.println("Reset button pressed");
+    }
+
+    if (millis() - pressStart >= 5000)
+    {
+      Serial.println("Resetting WiFi credentials...");
+      resetWiFi();
+    }
+  }
+  else
+  {
+    if (buttonActive)
+    {
+      buttonActive = false;
+      Serial.println("Reset button released");
+    }
+  }
+}
+
+void initWiFiManager()
+{
+  WiFiManager wm;
+  wm.setDebugOutput(false);
+  wm.setConfigPortalTimeout(120);
+
+  if (digitalRead(RESET_WIFI_PIN) == LOW)
+  {
+    Serial.println("Reset button pressed during startup");
+    wm.startConfigPortal("EnergyMeterAP");
+  }
+  else
+  {
+    if (!wm.autoConnect("EnergyMeterAP"))
+    {
+      Serial.println("Failed to connect");
+      wm.startConfigPortal("EnergyMeterAP");
+    }
+  }
+
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    Serial.println("Connected to WiFi");
+  }
+}
+
+void sendInt(String path, int value)
+{
+  Firebase.RTDB.setInt(&fbdo, path.c_str(), value);
+}
+
+void sendFloat(String path, float value)
+{
+  Firebase.RTDB.setFloat(&fbdo, path.c_str(), value);
+}
+
+void fetchSettings()
+{
+  if (Firebase.RTDB.getInt(&fbdo, relayControlPath25.c_str()))
+    manualControlRelay1 = fbdo.intData();
+
+  if (Firebase.RTDB.getInt(&fbdo, relayControlPath26.c_str()))
+    manualControlRelay2 = fbdo.intData();
+
+  if (Firebase.RTDB.getInt(&fbdo, relayControlPath27.c_str()))
+    manualControlRelay3 = fbdo.intData();
+
+  if (Firebase.RTDB.getInt(&fbdo, relayControlPath14.c_str()))
+    manualControlRelay4 = fbdo.intData();
+}
+
+void updateOnlineStatus()
+{
+  Firebase.RTDB.setInt(&fbdo, onlineStatusPath.c_str(), 1);
+}
+
+void setup()
+{
+  Serial.begin(115200);
+  initWiFiManager();
+  voltageSensor.setSensitivity(SENSITIVITY);
+
+  pinMode(relay1, OUTPUT);
+  digitalWrite(relay1, HIGH);
+  pinMode(relay2, OUTPUT);
+  digitalWrite(relay2, HIGH);
+  pinMode(relay3, OUTPUT);
+  digitalWrite(relay3, HIGH);
+  pinMode(relay4, OUTPUT);
+  digitalWrite(relay4, HIGH);
+  pinMode(current, INPUT);
+  pinMode(wifi_led, OUTPUT);
+  pinMode(RESET_WIFI_PIN, INPUT_PULLUP);
+  digitalWrite(wifi_led, LOW);  // Optional: keep off initially
+
+  config.api_key = API_KEY;
+  auth.user.email = USER_EMAIL;
+  auth.user.password = USER_PASSWORD;
+  config.database_url = DATABASE_URL;
+
+  Firebase.reconnectWiFi(true);
+  Firebase.begin(&config, &auth);
+
+  while ((auth.token.uid) == "")
+  {
+    delay(1000);
+  }
+
+  uid = auth.token.uid.c_str();
+  databasePath = "/devices/energy";
+  relayStatusPath25 = databasePath + "/relay_status_25";
+  relayStatusPath26 = databasePath + "/relay_status_26";
+  relayStatusPath27 = databasePath + "/relay_status_27";
+  relayStatusPath14 = databasePath + "/relay_status_14";
+  relayControlPath25 = databasePath + "/outputs/digital/25";
+  relayControlPath26 = databasePath + "/outputs/digital/26";
+  relayControlPath27 = databasePath + "/outputs/digital/27";
+  relayControlPath14 = databasePath + "/outputs/digital/14";
+  voltagePath = databasePath + "/voltage";
+  currentPath = databasePath + "/current";
+  onlineStatusPath = databasePath + "/online_status";
+
+  updateOnlineStatus();
+  fetchSettings();
+}
+
+void loop()
+{
+  handleResetButton();
+  wifi_led_status();
+
+  if (Firebase.ready() && (millis() - sendDataPrevMillis > timerDelay))
+  {
+    sendDataPrevMillis = millis();
+    updateOnlineStatus();
+    fetchSettings();
+
+    digitalWrite(relay1, manualControlRelay1 ? LOW : HIGH);
+    digitalWrite(relay2, manualControlRelay2 ? LOW : HIGH);
+    digitalWrite(relay3, manualControlRelay3 ? LOW : HIGH);
+    digitalWrite(relay4, manualControlRelay4 ? LOW : HIGH);
+
+    float totalVoltage = 0.0;
+    for (int i = 0; i < NUM_SAMPLES; i++)
+    {
+      totalVoltage += voltageSensor.getRmsVoltage();
+      delay(5);
+    }
+    int avgVoltage = (totalVoltage / NUM_SAMPLES) * CALIBRATION_FACTOR;
+
+    float curr20 = 0.0;
+    int adc = analogRead(current);
+    float adc_voltage = adc * (3.3 / 4096.0);
+    float current_voltage = (adc_voltage * (R1 + R2) / R2);
+    curr20 = (current_voltage - 2.5) / 0.066;
+    curr20 = (round(curr20 * 10000.0)) / 10000.0;
+    curr20 = fabs(curr20);
+    curr20 = curr20/10.0;
+
+    sendInt(voltagePath, avgVoltage);
+    sendFloat(currentPath, curr20);
+    sendInt(relayStatusPath25, digitalRead(relay1) == LOW ? 1 : 0);
+    sendInt(relayStatusPath26, digitalRead(relay2) == LOW ? 1 : 0);
+    sendInt(relayStatusPath27, digitalRead(relay3) == LOW ? 1 : 0);
+    sendInt(relayStatusPath14, digitalRead(relay4) == LOW ? 1 : 0);
+  }
+
+  if (Firebase.isTokenExpired())
+  {
+    Firebase.refreshToken(&config);
+  }
+}
+
+void wifi_led_status()
+{
+  if(WiFi.status() == WL_CONNECTED)
+  {
+    digitalWrite(wifi_led, HIGH);
+  }
+  else
+  {
+    digitalWrite(wifi_led, LOW);
+  }
+}
